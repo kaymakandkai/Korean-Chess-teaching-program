@@ -1,0 +1,21 @@
+{
+  "name": "waryong-janggi",
+  "private": true,
+  "version": "0.1.0",
+  "description": "와룡장기 - 장기를 두고 배우는 프로그램 (AI 대국 / 상황별 대국 / 2인 대국 / 교습)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:single": "vite build --mode single",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8",
+    "vite-plugin-singlefile": "^2.3.4",
+    "vitest": "^5.1.0"
+  }
+}
