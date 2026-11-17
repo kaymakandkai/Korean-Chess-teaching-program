@@ -152,3 +152,31 @@ for (let s = 0; s < NSQ; s++) {
     for (const t of SOLDIER_MOVES[side][s]) SOLDIER_ATTACKERS[side][t].push(s);
   }
 }
+
+// ---- 궁과 관계있는 칸 (합법성·장군 판정 생략용) ----
+/**
+ * KING_REL[k][s] = 1 이면, s 칸에서 기물이 떠나거나 들어올 때 k 칸의 궁에 대한 공격이 바뀔 수 있다.
+ * (같은 가로·세로줄, 궁성 대각선, 마의 멱, 상의 길목)
+ */
+export const KING_REL: Uint8Array[] = Array.from({ length: NSQ }, () => new Uint8Array(NSQ));
+/** KING_GIVES[k][s] = 1 이면, s 칸으로 오거나 떠나는 수가 k 칸 궁에게 장군이 될 수 있다 */
+export const KING_GIVES: Uint8Array[] = Array.from({ length: NSQ }, () => new Uint8Array(NSQ));
+for (let k = 0; k < NSQ; k++) {
+  if (PALACE[k] < 0) continue;
+  const rel = KING_REL[k];
+  for (let s = 0; s < NSQ; s++) if (rowOf(s) === rowOf(k) || colOf(s) === colOf(k)) rel[s] = 1;
+  for (const ray of DIAG_RAYS[k]) for (const s of ray) rel[s] = 1;
+  const ha = HORSE_ATTACKERS[k];
+  for (let i = 0; i < ha.length; i += 2) rel[ha[i + 1]] = 1;
+  const ea = ELEPHANT_ATTACKERS[k];
+  for (let i = 0; i < ea.length; i += 3) {
+    rel[ea[i + 1]] = 1;
+    rel[ea[i + 2]] = 1;
+  }
+  const gv = KING_GIVES[k];
+  gv.set(rel);
+  for (let i = 0; i < ha.length; i += 2) gv[ha[i]] = 1;
+  for (let i = 0; i < ea.length; i += 3) gv[ea[i]] = 1;
+  for (const d of PALACE_MOVES[k]) gv[d] = 1;
+  for (const side of [CHO, HAN]) for (const s of SOLDIER_ATTACKERS[side][k]) gv[s] = 1;
+}

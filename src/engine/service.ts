@@ -15,7 +15,8 @@ export type EngineRequest =
   | (Base & { kind: 'aiMove'; level: LevelId })
   | (Base & { kind: 'analyze'; timeMs: number; deomSide: Side })
   | (Base & { kind: 'review'; move: number; prior: PriorAnalysis | null; timeMs: number; deomSide: Side })
-  | (Base & { kind: 'hint'; timeMs: number });
+  | (Base & { kind: 'hint'; timeMs: number })
+  | (Base & { kind: 'ponder'; contempt: number });
 
 export type EngineResponse = AiMoveResult | Advice | Review | { move: number; score: number; pv: number[] };
 
@@ -32,6 +33,18 @@ export class EngineService {
   private searcher: Searcher;
   constructor(ttBits = 20) {
     this.searcher = new Searcher(ttBits);
+  }
+
+  private ponderPos: Position | null = null;
+  private ponderKey = '';
+  /** 선읽기 한 조각 (짧게 탐색해 치환표를 채운다). 상대 차례 국면을 미리 읽는다 */
+  ponderChunk(req: EngineRequest & { kind: 'ponder' }, ms: number) {
+    const key = req.startFen + '|' + req.moves.join(',');
+    if (key !== this.ponderKey || !this.ponderPos) {
+      this.ponderPos = rebuild(req.startFen, req.moves);
+      this.ponderKey = key;
+    }
+    this.searcher.search(this.ponderPos, { timeMs: ms * 3, maxTimeMs: ms, bikjang: req.bikjang, contempt: -req.contempt, ponder: true });
   }
 
   handle(req: EngineRequest): EngineResponse {
@@ -54,6 +67,9 @@ export class EngineService {
           deomSide: req.deomSide,
         });
       }
+      case 'ponder':
+        this.ponderChunk(req, 200);
+        return { move: 0, score: 0, pv: [] };
       case 'hint': {
         const r = this.searcher.search(pos, { timeMs: req.timeMs, bikjang: req.bikjang });
         return { move: r.move, score: r.score, pv: r.pv };

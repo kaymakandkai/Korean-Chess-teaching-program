@@ -14,6 +14,12 @@ import { onSettingsChange } from './settings';
 import { sound } from './sound';
 import type { GameConfig, Screen } from './types';
 
+function formatCount(n: number) {
+  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}억`;
+  if (n >= 1e4) return `${Math.round(n / 1e4).toLocaleString('ko-KR')}만`;
+  return n.toLocaleString('ko-KR');
+}
+
 export function gameScreen(app: App, cfg: GameConfig): Screen {
   const v = new GameView(app, cfg);
   return { el: v.el, title: cfg.title, destroy: () => v.destroy() };
@@ -42,6 +48,7 @@ class GameView {
   private hintsShown = 0;
   private unsub: () => void;
   private resultShown = false;
+  private lastAi: { depth: number; nodes: number; timeMs: number } | null = null;
 
   private topBar = h('div', { class: 'pbar top' });
   private bottomBar = h('div', { class: 'pbar bottom' });
@@ -102,6 +109,7 @@ class GameView {
 
   destroy() {
     this.token++;
+    this.ai.stopPonder();
     clearInterval(this.timer);
     this.ai.cancelAll();
     this.coach.cancelAll();
@@ -173,6 +181,7 @@ class GameView {
         if (tok !== this.token) return;
         this.thinking = false;
         clearInterval(this.timer);
+        this.lastAi = { depth: res.depth, nodes: res.nodes, timeMs: res.timeMs };
         if (!res.move) {
           this.game.resign(this.game.side);
           this.next();
@@ -180,6 +189,7 @@ class GameView {
         }
         if (res.move === PASS) toast('상대가 한수 쉼을 했습니다.');
         this.apply(res.move);
+        this.startPonder();
       })
       .catch((err) => {
         if (err instanceof CancelledError) return;
@@ -189,6 +199,19 @@ class GameView {
         toast('AI 계산 중 오류가 발생했습니다.', 'warn');
         this.renderAll();
       });
+  }
+
+  /** 전설 단계: 사람이 생각하는 동안 AI가 미리 계산한다 */
+  private startPonder() {
+    const lv = getLevel(this.cfg.level);
+    if (!lv.ponder || this.cfg.mode === 'local' || this.game.result || !this.isHumanTurn()) return;
+    this.ai.ponder({
+      kind: 'ponder',
+      startFen: this.game.startFen,
+      moves: this.game.moves(),
+      bikjang: this.cfg.rules.bikjang,
+      contempt: lv.contempt ?? 0,
+    });
   }
 
   private apply(m: number) {
@@ -330,6 +353,7 @@ class GameView {
     this.adviceFor = -1;
     this.goal = 'pending';
     this.resultShown = false;
+    this.lastAi = null;
     this.renderAll();
     this.next();
   }
@@ -526,7 +550,9 @@ class GameView {
   private renderThinking() {
     if (this.thinking) {
       const sec = ((performance.now() - this.thinkStart) / 1000).toFixed(1);
-      this.thinkBadge.textContent = `AI가 생각 중… ${sec}초`;
+      const lv = getLevel(this.cfg.level);
+      const cap = lv.maxTimeMs ?? lv.timeMs;
+      this.thinkBadge.textContent = `AI가 생각 중… ${sec}초${cap >= 5000 ? ` (최대 ${Math.round(cap / 1000)}초)` : ''}`;
       this.thinkBadge.classList.add('show');
     } else this.thinkBadge.classList.remove('show');
   }
@@ -554,6 +580,15 @@ class GameView {
         facing ? '빅장 상태입니다. 이번 수에 피하지 않으면 무승부가 됩니다.' : `${g.records.length}수 진행${this.cfg.rules.moveLimit ? ` / ${this.cfg.rules.moveLimit}수 제한` : ''}`,
       ),
     );
+    if (this.lastAi && this.cfg.mode !== 'local') {
+      el.append(
+        h(
+          'div',
+          { class: 'st-sub ai-calc' },
+          `직전 AI 수: ${this.lastAi.depth}수 앞까지 · ${formatCount(this.lastAi.nodes)} 국면 계산 · ${(this.lastAi.timeMs / 1000).toFixed(1)}초`,
+        ),
+      );
+    }
   }
 
   private renderControls() {

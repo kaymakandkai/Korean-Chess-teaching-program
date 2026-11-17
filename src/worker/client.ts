@@ -119,6 +119,16 @@ export class EngineClient {
     });
   }
 
+  /** 상대(사람)가 생각하는 동안 미리 계산 — 다음 요청이 오면 워커가 스스로 멈춘다 */
+  ponder(req: EngineRequest & { kind: 'ponder' }) {
+    if (this.failed || !this.worker || !this.ready) return;
+    this.worker.postMessage({ ponder: req });
+  }
+
+  stopPonder() {
+    if (this.worker && this.ready) this.worker.postMessage({ stopPonder: true });
+  }
+
   /** 진행 중인 모든 계산을 취소 (워커를 새로 띄움) */
   cancelAll() {
     for (const p of this.pending.values()) p.reject(new CancelledError());

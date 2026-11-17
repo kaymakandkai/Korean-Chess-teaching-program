@@ -20,6 +20,12 @@ export interface Level {
   blunder: number;
   /** 실수할 때 허용하는 최대 손해 */
   blunderMax: number;
+  /** 형세가 불안정할 때 늘릴 수 있는 최대 생각 시간(ms) */
+  maxTimeMs?: number;
+  /** 무승부(빅장·반복)를 피하려는 정도 (졸=100) */
+  contempt?: number;
+  /** 상대가 생각하는 동안 미리 계산(선읽기) */
+  ponder?: boolean;
 }
 
 export const LEVELS: Level[] = [
@@ -74,6 +80,8 @@ export const LEVELS: Level[] = [
     desc: '깊이 읽고 실수가 거의 없습니다. 작은 우세도 놓치지 않습니다.',
     depth: 0,
     timeMs: 3000,
+    maxTimeMs: 6000,
+    contempt: 20,
     noise: 0,
     blunder: 0,
     blunderMax: 0,
@@ -82,9 +90,12 @@ export const LEVELS: Level[] = [
     id: 'legend',
     name: '전설',
     grade: '9단',
-    desc: '수십만~수백만 가지 경우의 수를 매 수 계산합니다. 사람이 이기기 어려운 수준입니다.',
+    desc: '매 수 수백만~수천만 국면을 읽고, 내가 생각하는 동안에도 미리 계산합니다. 빅장·반복으로 비기기도 피합니다.',
     depth: 0,
-    timeMs: 8000,
+    timeMs: 9000,
+    maxTimeMs: 20000,
+    contempt: 40,
+    ponder: true,
     noise: 0,
     blunder: 0,
     blunderMax: 0,
@@ -118,10 +129,11 @@ export function chooseAiMove(
 ): AiMoveResult {
   const level = getLevel(levelId);
   if (level.noise <= 0) {
-    const res = searcher.search(pos, { timeMs: level.timeMs, maxDepth: 40, bikjang, allowPass: true });
+    const opts = { timeMs: level.timeMs, maxTimeMs: level.maxTimeMs, maxDepth: 60, bikjang, contempt: level.contempt ?? 0 };
+    const res = searcher.search(pos, { ...opts, allowPass: true });
     // 한수 쉼은 다른 수보다 확실히 좋을 때만 (어색한 쉼 방지)
     if (res.move === PASS && pos.legalMoves().length > 0) {
-      const alt = searcher.search(pos, { timeMs: level.timeMs / 3, maxDepth: 40, bikjang, excludeRoot: [PASS] });
+      const alt = searcher.search(pos, { ...opts, timeMs: level.timeMs / 3, maxTimeMs: level.timeMs / 3, excludeRoot: [PASS] });
       if (alt.move && alt.score > res.score - 30) return { ...alt, levelId };
     }
     return { ...res, levelId };

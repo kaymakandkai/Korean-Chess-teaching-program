@@ -18,7 +18,7 @@ describe('연습 지형', () => {
       const pos = Position.fromFen(sc.fen);
       expect(validatePosition(pos)).toEqual([]);
       expect(pos.side).toBe(sc.userSide);
-      const r = S.search(pos, { timeMs: 2500, maxDepth: 30, bikjang: true });
+      const r = S.search(pos, { maxDepth: 12, bikjang: true });
       const g = sc.goal;
       if (g.type === 'mate') {
         expect(isMateScore(r.score) && r.score > 0).toBe(true);
@@ -33,7 +33,7 @@ describe('연습 지형', () => {
         const legal = pos.legalMoves();
         for (const m of legal) {
           pos.makeMove(m);
-          const rr = S.search(pos, { timeMs: 200, maxDepth: 6, bikjang: true });
+          const rr = S.search(pos, { maxDepth: 7, bikjang: true }); // 시간 대신 깊이로 고정 (CPU 부하와 무관)
           pos.unmakeMove();
           if (-rr.score < -250) losing++;
         }

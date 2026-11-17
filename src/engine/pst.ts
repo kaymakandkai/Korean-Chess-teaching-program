@@ -1,10 +1,30 @@
 // 기물 가치와 위치 점수표 (초 기준으로 작성, 한은 상하 반전)
 import { CHO, HAN, NSQ, colOf, rowOf } from './constants';
 
+/**
+ * 기물 가치와 위치표 배율 (자가대국 기보로 조정한 값, scripts/tune 참고)
+ * v*: 기물 가치(졸=100), s*: 위치 점수표 배율(%)
+ */
+export const MW = {
+  vA: 140,
+  vE: 170,
+  vH: 260,
+  vR: 740,
+  vC: 300,
+  vP: 105,
+  sK: 225,
+  sA: 30,
+  sE: 155,
+  sH: 170,
+  sR: 110,
+  sC: 300,
+  sP: 125,
+};
+
 /** 엔진 내부 기물 가치 (졸 = 100) — index: 기물 종류 */
-export const VALUE = [0, 0, 190, 200, 290, 650, 350, 100];
+export const VALUE = [0, 0, 0, 0, 0, 0, 0, 0];
 /** SEE(교환 계산)에서 쓰는 가치: 궁은 매우 크게 */
-export const SEE_VALUE = [0, 5000, 190, 200, 290, 650, 350, 100];
+export const SEE_VALUE = [0, 5000, 0, 0, 0, 0, 0, 0];
 
 // row 0 = 상대 진영 끝줄, row 9 = 내 진영 끝줄 (초 기준)
 const P_SOLDIER = [
@@ -95,19 +115,29 @@ const P_GUARD = [
 const TABLES = [null, P_KING, P_GUARD, P_ELEPHANT, P_HORSE, P_CHARIOT, P_CANNON, P_SOLDIER];
 
 /** PSQ[pieceCode][sq] = 기물 가치 + 위치 점수 (해당 진영 관점) */
-export const PSQ: Int32Array[] = [];
-for (let code = 0; code < 16; code++) {
-  const arr = new Int32Array(NSQ);
-  const type = code & 7;
-  const side = code >> 3;
-  const t = TABLES[type];
-  if (t && (side === CHO || side === HAN)) {
+export const PSQ: Int32Array[] = Array.from({ length: 16 }, () => new Int32Array(NSQ));
+
+/** MW 값으로 VALUE·PSQ 를 다시 만든다 (배열 객체는 그대로 유지) */
+export function rebuildPSQ() {
+  const vals = [0, 0, MW.vA, MW.vE, MW.vH, MW.vR, MW.vC, MW.vP];
+  const scales = [0, MW.sK, MW.sA, MW.sE, MW.sH, MW.sR, MW.sC, MW.sP];
+  for (let t = 2; t <= 7; t++) {
+    VALUE[t] = vals[t];
+    SEE_VALUE[t] = vals[t];
+  }
+  for (let code = 0; code < 16; code++) {
+    const arr = PSQ[code];
+    arr.fill(0);
+    const type = code & 7;
+    const side = code >> 3;
+    const t = TABLES[type];
+    if (!t || (side !== CHO && side !== HAN)) continue;
     for (let s = 0; s < NSQ; s++) {
       const r = rowOf(s);
       const c = colOf(s);
       const rr = side === CHO ? r : 9 - r;
-      arr[s] = VALUE[type] + t[rr][c];
+      arr[s] = vals[type] + Math.round((t[rr][c] * scales[type]) / 100);
     }
   }
-  PSQ.push(arr);
 }
+rebuildPSQ();

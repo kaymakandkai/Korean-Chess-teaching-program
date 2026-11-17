@@ -22,6 +22,8 @@ import {
   ELEPHANT_MOVES,
   HORSE_ATTACKERS,
   HORSE_MOVES,
+  KING_GIVES,
+  KING_REL,
   ORTHO_RAYS,
   PALACE,
   PALACE_MOVES,
@@ -34,6 +36,8 @@ const MAX_STACK = 2048;
 
 const FEN_CHARS = ' KAEHRCP';
 
+type MoveBuf = Int32Array | number[];
+
 export class Position {
   board = new Int8Array(NSQ);
   side: Side = CHO;
@@ -44,6 +48,10 @@ export class Position {
   psq = new Int32Array(2);
   /** 기물 코드별 개수 */
   counts = new Int8Array(16);
+  /** 진영별 기물 위치 목록 (순서는 의미 없음) */
+  plist = [new Int8Array(16), new Int8Array(16)];
+  pcnt = new Int8Array(2);
+  private pidx = new Int8Array(NSQ);
 
   // 무르기용 스택
   sp = 0;
@@ -118,21 +126,27 @@ export class Position {
     return Position.fromFen(this.toFen());
   }
 
-  /** 보드로부터 해시·점수·개수 등을 다시 계산 */
+  /** 보드로부터 해시·점수·개수·기물 목록을 다시 계산 (보드를 직접 고친 뒤 호출) */
   recompute() {
     this.hashLo = 0;
     this.hashHi = 0;
     this.psq[0] = this.psq[1] = 0;
     this.counts.fill(0);
     this.kingSq[0] = this.kingSq[1] = -1;
+    this.pcnt[0] = this.pcnt[1] = 0;
     for (let s = 0; s < NSQ; s++) {
       const p = this.board[s];
       if (!p) continue;
+      const side = p >> 3;
       this.hashLo ^= Z_LO[p * NSQ + s];
       this.hashHi ^= Z_HI[p * NSQ + s];
-      this.psq[p >> 3] += PSQ[p][s];
+      this.psq[side] += PSQ[p][s];
       this.counts[p]++;
-      if ((p & 7) === KING) this.kingSq[p >> 3] = s;
+      if ((p & 7) === KING) this.kingSq[side] = s;
+      if (this.pcnt[side] < 16) {
+        this.pidx[s] = this.pcnt[side];
+        this.plist[side][this.pcnt[side]++] = s;
+      }
     }
     if (this.side === HAN) {
       this.hashLo ^= Z_SIDE_LO;
@@ -155,21 +169,29 @@ export class Position {
       const b = this.board;
       const p = b[from];
       const cap = b[to];
+      const us = p >> 3;
       this.stCap[sp] = cap;
+      if (cap) {
+        const them = cap >> 3;
+        const vi = this.pidx[to];
+        const last = this.plist[them][--this.pcnt[them]];
+        this.plist[them][vi] = last;
+        this.pidx[last] = vi;
+        this.hashLo ^= Z_LO[cap * NSQ + to];
+        this.hashHi ^= Z_HI[cap * NSQ + to];
+        this.psq[them] -= PSQ[cap][to];
+        this.counts[cap]--;
+        if ((cap & 7) === KING) this.kingSq[them] = -1;
+        this.revStart = sp + 1;
+      }
+      const pi = this.pidx[from];
+      this.plist[us][pi] = to;
+      this.pidx[to] = pi;
       b[to] = p;
       b[from] = 0;
-      const us = p >> 3;
       this.hashLo ^= Z_LO[p * NSQ + from] ^ Z_LO[p * NSQ + to];
       this.hashHi ^= Z_HI[p * NSQ + from] ^ Z_HI[p * NSQ + to];
       this.psq[us] += PSQ[p][to] - PSQ[p][from];
-      if (cap) {
-        this.hashLo ^= Z_LO[cap * NSQ + to];
-        this.hashHi ^= Z_HI[cap * NSQ + to];
-        this.psq[cap >> 3] -= PSQ[cap][to];
-        this.counts[cap]--;
-        if ((cap & 7) === KING) this.kingSq[cap >> 3] = -1;
-        this.revStart = sp + 1;
-      }
       if ((p & 7) === KING) this.kingSq[us] = to;
     }
     this.side = (this.side ^ 1) as Side;
@@ -191,16 +213,22 @@ export class Position {
     const b = this.board;
     const p = b[to];
     const cap = this.stCap[sp];
+    const us = p >> 3;
+    const pi = this.pidx[to];
+    this.plist[us][pi] = from;
+    this.pidx[from] = pi;
     b[from] = p;
     b[to] = cap;
-    const us = p >> 3;
     this.psq[us] -= PSQ[p][to] - PSQ[p][from];
-    if (cap) {
-      this.psq[cap >> 3] += PSQ[cap][to];
-      this.counts[cap]++;
-      if ((cap & 7) === KING) this.kingSq[cap >> 3] = to;
-    }
     if ((p & 7) === KING) this.kingSq[us] = from;
+    if (cap) {
+      const them = cap >> 3;
+      this.pidx[to] = this.pcnt[them];
+      this.plist[them][this.pcnt[them]++] = to;
+      this.psq[them] += PSQ[cap][to];
+      this.counts[cap]++;
+      if ((cap & 7) === KING) this.kingSq[them] = to;
+    }
   }
 
   lastMove(): number {
@@ -238,78 +266,82 @@ export class Position {
    * 의사 합법수 생성 (자기 궁이 공격받는지는 확인하지 않음).
    * @returns 생성된 수의 개수
    */
-  genMoves(out: Int32Array | number[], capsOnly: boolean): number {
-    const b = this.board;
+  genMoves(out: MoveBuf, capsOnly: boolean): number {
     const us = this.side;
+    const list = this.plist[us];
+    const cnt = this.pcnt[us];
     let n = 0;
-    for (let s = 0; s < NSQ; s++) {
-      const p = b[s];
-      if (p === 0 || p >> 3 !== us) continue;
-      const base = s << 7;
-      switch (p & 7) {
-        case KING:
-        case GUARD: {
-          const mv = PALACE_MOVES[s];
-          for (let i = 0; i < mv.length; i++) {
-            const to = mv[i];
-            const q = b[to];
-            if (q === 0) {
-              if (!capsOnly) out[n++] = base | to;
-            } else if (q >> 3 !== us) out[n++] = base | to;
-          }
-          break;
+    for (let i = 0; i < cnt; i++) n = this.genFrom(list[i], out, n, capsOnly);
+    return n;
+  }
+
+  /** 한 기물의 의사 합법수 */
+  genFrom(s: number, out: MoveBuf, n: number, capsOnly: boolean): number {
+    const b = this.board;
+    const p = b[s];
+    const us = p >> 3;
+    const base = s << 7;
+    switch (p & 7) {
+      case KING:
+      case GUARD: {
+        const mv = PALACE_MOVES[s];
+        for (let i = 0; i < mv.length; i++) {
+          const to = mv[i];
+          const q = b[to];
+          if (q === 0) {
+            if (!capsOnly) out[n++] = base | to;
+          } else if (q >> 3 !== us) out[n++] = base | to;
         }
-        case HORSE: {
-          const mv = HORSE_MOVES[s];
-          for (let i = 0; i < mv.length; i += 2) {
-            if (b[mv[i + 1]] !== 0) continue;
-            const to = mv[i];
-            const q = b[to];
-            if (q === 0) {
-              if (!capsOnly) out[n++] = base | to;
-            } else if (q >> 3 !== us) out[n++] = base | to;
-          }
-          break;
+        break;
+      }
+      case HORSE: {
+        const mv = HORSE_MOVES[s];
+        for (let i = 0; i < mv.length; i += 2) {
+          if (b[mv[i + 1]] !== 0) continue;
+          const to = mv[i];
+          const q = b[to];
+          if (q === 0) {
+            if (!capsOnly) out[n++] = base | to;
+          } else if (q >> 3 !== us) out[n++] = base | to;
         }
-        case ELEPHANT: {
-          const mv = ELEPHANT_MOVES[s];
-          for (let i = 0; i < mv.length; i += 3) {
-            if (b[mv[i + 1]] !== 0 || b[mv[i + 2]] !== 0) continue;
-            const to = mv[i];
-            const q = b[to];
-            if (q === 0) {
-              if (!capsOnly) out[n++] = base | to;
-            } else if (q >> 3 !== us) out[n++] = base | to;
-          }
-          break;
+        break;
+      }
+      case ELEPHANT: {
+        const mv = ELEPHANT_MOVES[s];
+        for (let i = 0; i < mv.length; i += 3) {
+          if (b[mv[i + 1]] !== 0 || b[mv[i + 2]] !== 0) continue;
+          const to = mv[i];
+          const q = b[to];
+          if (q === 0) {
+            if (!capsOnly) out[n++] = base | to;
+          } else if (q >> 3 !== us) out[n++] = base | to;
         }
-        case CHARIOT: {
-          n = this.slide(ORTHO_RAYS[s], base, us, out, n, capsOnly);
-          n = this.slide(DIAG_RAYS[s], base, us, out, n, capsOnly);
-          break;
+        break;
+      }
+      case CHARIOT:
+        n = this.slide(ORTHO_RAYS[s], base, us, out, n, capsOnly);
+        n = this.slide(DIAG_RAYS[s], base, us, out, n, capsOnly);
+        break;
+      case CANNON:
+        n = this.jump(ORTHO_RAYS[s], base, us, out, n, capsOnly);
+        n = this.jump(DIAG_RAYS[s], base, us, out, n, capsOnly);
+        break;
+      case SOLDIER: {
+        const mv = SOLDIER_MOVES[us][s];
+        for (let i = 0; i < mv.length; i++) {
+          const to = mv[i];
+          const q = b[to];
+          if (q === 0) {
+            if (!capsOnly) out[n++] = base | to;
+          } else if (q >> 3 !== us) out[n++] = base | to;
         }
-        case CANNON: {
-          n = this.jump(ORTHO_RAYS[s], base, us, out, n, capsOnly);
-          n = this.jump(DIAG_RAYS[s], base, us, out, n, capsOnly);
-          break;
-        }
-        case SOLDIER: {
-          const mv = SOLDIER_MOVES[us][s];
-          for (let i = 0; i < mv.length; i++) {
-            const to = mv[i];
-            const q = b[to];
-            if (q === 0) {
-              if (!capsOnly) out[n++] = base | to;
-            } else if (q >> 3 !== us) out[n++] = base | to;
-          }
-          break;
-        }
+        break;
       }
     }
     return n;
   }
 
-  private slide(rays: number[][], base: number, us: number, out: Int32Array | number[], n: number, capsOnly: boolean) {
+  private slide(rays: number[][], base: number, us: number, out: MoveBuf, n: number, capsOnly: boolean) {
     const b = this.board;
     for (let d = 0; d < rays.length; d++) {
       const ray = rays[d];
@@ -327,7 +359,7 @@ export class Position {
     return n;
   }
 
-  private jump(rays: number[][], base: number, us: number, out: Int32Array | number[], n: number, capsOnly: boolean) {
+  private jump(rays: number[][], base: number, us: number, out: MoveBuf, n: number, capsOnly: boolean) {
     const b = this.board;
     for (let d = 0; d < rays.length; d++) {
       const ray = rays[d];
@@ -350,6 +382,44 @@ export class Position {
       }
     }
     return n;
+  }
+
+  private pseudoBuf: number[] = [];
+  /** m 이 현재 차례에서 의사 합법수인지 (치환표 수 검증용) */
+  isPseudoLegal(m: number): boolean {
+    if (m === PASS || m <= 0) return false;
+    const from = m >> 7;
+    if (from >= NSQ) return false;
+    const p = this.board[from];
+    if (!p || p >> 3 !== this.side) return false;
+    const buf = this.pseudoBuf;
+    const n = this.genFrom(from, buf, 0, false);
+    for (let i = 0; i < n; i++) if (buf[i] === m) return true;
+    return false;
+  }
+
+  /**
+   * 방금 둔 수(mover 쪽)가 자기 궁을 위험하게 하지 않았는지.
+   * 궁과 무관한 칸의 수는 공격 판정을 생략한다. (makeMove 직후, wasInCheck = 두기 전 장군 여부)
+   */
+  leavesKingSafe(m: number, mover: number, wasInCheck: boolean): boolean {
+    const k = this.kingSq[mover];
+    if (k < 0) return true;
+    if (!wasInCheck && m !== PASS && k !== (m & 127)) {
+      const rel = KING_REL[k];
+      if (!rel[m >> 7] && !rel[m & 127]) return true;
+    }
+    return !this.isAttacked(k, mover ^ 1);
+  }
+
+  /** 방금 둔 수가 상대 궁에게 장군인지 (makeMove 직후 호출) */
+  givesCheck(m: number): boolean {
+    const them = this.side;
+    const k = this.kingSq[them];
+    if (k < 0 || m === PASS) return false;
+    const gv = KING_GIVES[k];
+    if (!gv[m >> 7] && !gv[m & 127]) return false;
+    return this.isAttacked(k, them ^ 1);
   }
 
   /** by 진영이 t 칸을 공격하고 있는지 */
@@ -424,9 +494,10 @@ export class Position {
     const n = this.genMoves(buf, false);
     const res: number[] = [];
     const us = this.side;
+    const chk = this.inCheck(us);
     for (let i = 0; i < n; i++) {
       this.makeMove(buf[i]);
-      if (!this.inCheck(us)) res.push(buf[i]);
+      if (this.leavesKingSafe(buf[i], us, chk)) res.push(buf[i]);
       this.unmakeMove();
     }
     return res;
@@ -438,9 +509,10 @@ export class Position {
     const n = this.genMoves(buf, true);
     const res: number[] = [];
     const us = this.side;
+    const chk = this.inCheck(us);
     for (let i = 0; i < n; i++) {
       this.makeMove(buf[i]);
-      if (!this.inCheck(us)) res.push(buf[i]);
+      if (this.leavesKingSafe(buf[i], us, chk)) res.push(buf[i]);
       this.unmakeMove();
     }
     return res;
@@ -448,10 +520,13 @@ export class Position {
 
   isLegal(m: number): boolean {
     if (m === PASS) return !this.inCheck();
-    const from = m >> 7;
-    const p = this.board[from];
-    if (!p || p >> 3 !== this.side) return false;
-    return this.legalMoves().includes(m);
+    if (!this.isPseudoLegal(m)) return false;
+    const us = this.side;
+    const chk = this.inCheck(us);
+    this.makeMove(m);
+    const ok = this.leavesKingSafe(m, us, chk);
+    this.unmakeMove();
+    return ok;
   }
 
   /** 차·포·마·상 등 졸·사가 아닌 기물을 가지고 있는지 */
@@ -462,8 +537,3 @@ export class Position {
     );
   }
 }
-
-export function sideToMoveName(side: Side) {
-  return side === CHO ? '초' : '한';
-}
-export { CHO, HAN };

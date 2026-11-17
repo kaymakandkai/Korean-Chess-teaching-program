@@ -10,9 +10,13 @@
     "build:single": "vite build --mode single",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "tool:build": "vite build --ssr tools/selfplay-data.ts --outDir tools/out && vite build --ssr tools/tune.ts --outDir tools/out --emptyOutDir false",
+    "tool:selfplay": "node tools/out/selfplay-data.js",
+    "tool:tune": "node tools/out/tune.js"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "typescript": "^5.9.3",
     "vite": "^8.3.8",
     "vite-plugin-singlefile": "^2.3.4",

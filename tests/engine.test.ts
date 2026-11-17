@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CHO, makeMove } from '../src/engine/constants';
 import { analyzePosition, reviewMove } from '../src/engine/coach';
-import { chooseAiMove } from '../src/engine/levels';
+import { chooseAiMove, getLevel } from '../src/engine/levels';
 import { Position } from '../src/engine/position';
 import { Searcher, isMateScore, mateIn } from '../src/engine/search';
 import { DEFAULT_SETUP, buildInitialPosition } from '../src/engine/setup';
@@ -93,6 +93,26 @@ describe('교습 코치', () => {
     expect(rv.comments.join(' ')).toContain('외통');
     const good = reviewMove(S, pos, a.bestMove, { bestMove: a.bestMove, bestScore: a.bestScore, top: a.top, depth: a.depth }, opts);
     expect(good.quality).toBe('best');
+  });
+
+  it('선읽기(상대 차례 미리 계산) 후에도 정상적으로 수를 둔다', () => {
+    const svc = new EngineService(16);
+    const fen = buildInitialPosition(DEFAULT_SETUP).toFen();
+    const moves = [mv('79', '78')];
+    for (let i = 0; i < 3; i++) svc.ponderChunk({ kind: 'ponder', startFen: fen, moves, bikjang: true, contempt: 40 }, 50);
+    const pos = Position.fromFen(fen);
+    pos.makeMove(moves[0]);
+    const reply = pos.legalMoves()[0];
+    const r = svc.handle({ kind: 'aiMove', startFen: fen, moves: [...moves, reply], level: 'advanced', bikjang: true }) as { move: number };
+    pos.makeMove(reply);
+    expect(pos.isLegal(r.move)).toBe(true);
+  });
+
+  it('전설은 무승부를 피하고 선읽기를 사용한다', () => {
+    const lv = getLevel('legend');
+    expect(lv.contempt).toBeGreaterThan(0);
+    expect(lv.ponder).toBe(true);
+    expect(lv.maxTimeMs).toBeGreaterThan(lv.timeMs);
   });
 
   it('엔진 서비스: 기보를 재생해 요청을 처리한다', () => {
